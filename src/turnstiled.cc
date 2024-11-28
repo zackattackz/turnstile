@@ -1123,11 +1123,18 @@ static bool fd_handle_pipe(std::size_t i) {
         return false;
     }
     bool done = false;
+    int rerr = 0;
+    bool exceededmax = false;
     if (fds[i].revents & POLLIN) {
         /* read the string from the pipe */
         for (;;) {
             char c;
-            if (read(fds[i].fd, &c, 1) != 1) {
+            size_t rret = read(fds[i].fd, &c, 1);
+            exceededmax = lgn->srvstr.length() >= PATH_MAX;
+            if (exceededmax || rret <= 0) {
+                if (rret < 0) {
+                    rerr = errno;
+                }
                 break;
             }
             if (c == '\0') {
@@ -1138,8 +1145,14 @@ static bool fd_handle_pipe(std::size_t i) {
             lgn->srvstr.push_back(c);
         }
     }
-    if (done || (fds[i].revents & POLLHUP)) {
+    if (done || exceededmax || rerr || (fds[i].revents & POLLHUP)) {
         print_dbg("pipe: close");
+        if (exceededmax) {
+            print_err("user %d exceeded max srvstr size on readiness pipe\n", lgn->uid);
+        }
+        if (rerr) {
+            print_err("error reading readiness pipe (%s)\n", strerror(rerr));
+        }
         /* kill the pipe, we don't need it anymore */
         close(lgn->userpipe);
         lgn->userpipe = -1;
